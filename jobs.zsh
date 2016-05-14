@@ -1,6 +1,7 @@
 mkdir -p ~/.cache
 
 JOBLIST_FILE=${JOBLIST_FILE:-~/.cache/k_jobs}
+K_ZSH_DIR=$0:A:h
 
 K::joblist::reset(){
     [[ -f "$JOBLIST_FILE" ]] && rm $JOBLIST_FILE
@@ -70,8 +71,10 @@ jg(){
     fi
 }
 
-JOBTEST_PY=$0:h/scripts/jobtest.py
-
 jt(){
-    python2.7 $JOBTEST_PY "$@"
+    $K_ZSH_DIR/.python2.7/bin/python $K_ZSH_DIR/scripts/jobtest.py "$@"
+}
+
+jr(){
+    $K_ZSH_DIR/.python2.7/bin/python $K_ZSH_DIR/scripts/jobreport.py "$@"
 }

@@ -282,6 +282,31 @@ class JobInfo(object):
             str(g('dimer_time')),
         ])
 
+    def report(self):
+        return '''
+date:                     {date}
+job id:                   {job_id}
+
+account:                  {account}
+warking group:            {wg}
+
+script file:              {script_file}
+
+pdb id:                   {pdb_id}
+protein kind:             {protein_kind}
+
+number of fragments:      {nf}
+maximum molecular weight: {max_mw}
+maximum atomic orbital:   {max_ao}
+
+monomer time:             {monomer_time}
+dimer time:               {dimer_time}
+total time:               {total_time}
+
+number of nodes:          {node_num}
+node hour:                {node_hour}
+'''[1:-1].format(node_hour=self.node_hour, **self.__dict__)
+
 
 def main():
     pdbid = None
@@ -291,7 +316,13 @@ def main():
 
     info_regex = re.compile(r'\.i\d+')
 
+    human = False
+
     for arg in sys.argv[1:]:
+        if arg in ['-h', '--human-readable']:
+            human = True
+            continue
+
         ext = os.path.splitext(arg)[1]
 
         if ext in ['.out', '.log'] and os.path.isfile(arg):
@@ -309,6 +340,9 @@ def main():
     if not any([pdbid, info, output, shell]):
         sys.stderr.write('''
 USAGE: jr INPUT1 [INPUT2...]
+
+options:
+    -h, --human-readable: human readable output
 
 input types:
     output: output file (*.out, *.log)
@@ -349,7 +383,10 @@ informations:
     if output is not None:
         ji.parse_output(open(output))
 
-    print(ji)
+    if human:
+        print(ji.report())
+    else:
+        print(ji)
 
 
 if __name__ == '__main__':

@@ -323,7 +323,7 @@ def main():
             human = True
             continue
 
-        ext = os.path.splitext(arg)[1]
+        base, ext = os.path.splitext(arg)
 
         if ext in ['.out', '.log'] and os.path.isfile(arg):
             output = arg
@@ -334,8 +334,8 @@ def main():
         elif ext == '.sh' and os.path.isfile(arg):
             shell = arg
 
-        elif len(arg) == 4 and ext == '':
-            pdbid = arg
+        elif len(base) == 4 and len(ext) <= 2:
+            pdbid = arg.upper()
 
     if not any([pdbid, info, output, shell]):
         sys.stderr.write('''

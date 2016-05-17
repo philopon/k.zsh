@@ -261,10 +261,20 @@ class JobInfo(object):
         return float(self.node_num * self.total_time) / 3600
 
     def __str__(self):
-        def g(name):
-            return getattr(self, name, '')
+        def escape(s):
+            if ',' in s:
+                s = '"{}"'.format(s)
 
-        return '\t'.join([
+            return s
+
+        def g(name):
+            v = getattr(self, name, '')
+            if not isinstance(v, str):
+                v = str(v)
+
+            return escape(v)
+
+        return ','.join([
             g('date'),
             g('job_id'),
             g('account'),
@@ -272,14 +282,14 @@ class JobInfo(object):
             g('script_file'),
             g('protein_kind'),
             g('pdb_id'),
-            str(g('node_num')),
-            str(g('total_time')),
-            str(g('node_hour')),
-            str(g('nf')),
-            str(g('max_mw')),
-            str(g('max_ao')),
-            str(g('monomer_time')),
-            str(g('dimer_time')),
+            g('node_num'),
+            g('total_time'),
+            g('node_hour'),
+            g('nf'),
+            g('max_mw'),
+            g('max_ao'),
+            g('monomer_time'),
+            g('dimer_time'),
         ])
 
     def report(self):

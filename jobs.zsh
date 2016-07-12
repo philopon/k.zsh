@@ -72,9 +72,13 @@ jg(){
 }
 
 jt(){
-    $K_ZSH_DIR/.python2.7/bin/python $K_ZSH_DIR/scripts/jobtest.py "$@"
+    python2.7 $K_ZSH_DIR/scripts/jobtest.py "$@"
 }
 
 jr(){
-    $K_ZSH_DIR/.python2.7/bin/python $K_ZSH_DIR/scripts/jobreport.py "$@"
+    $K_ZSH_DIR/.sandbox/bin/python $K_ZSH_DIR/scripts/jobreport.py "$@"
+}
+
+ifie() {
+    $K_ZSH_DIR/.sandbox/bin/python $K_ZSH_DIR/scripts/ifie.py "$@"
 }

@@ -1,7 +1,7 @@
-PYTHON := python2.7
-PIP := ~/.local/bin/pip2.7
+PYTHON := python2.6
+PIP := ~/.local/bin/pip2.6
 VIRTUALENV := ~/.local/bin/virtualenv
-SANDBOX := .python2.7
+SANDBOX := .sandbox
 
 .DEFAULT_GOAL := requeirements
 
@@ -15,7 +15,7 @@ $(VIRTUALENV): $(PIP)
 	$(PIP) install virtualenv --user
 
 $(SANDBOX): $(VIRTUALENV)
-	$(VIRTUALENV) -p $(PYTHON) $@
+	$(VIRTUALENV) -p $(PYTHON) --system-site-packages $@
 
 .PHONY: requeirements
 requeirements: $(SANDBOX)

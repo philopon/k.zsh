@@ -100,10 +100,10 @@ class Job(object):
     def submit(self, node=1, elapse=3600, wait_time=3600):
         cmd = [
             'pjsub', '--interact',
-            '--rsc-list', 'node={}'.format(node),
-            '--mpi', 'proc={}'.format(node),
-            '--rsc-list', 'elapse={}'.format(elapse),
-            '--sparam', 'wait-time={}'.format(wait_time),
+            '--rsc-list', 'node={0}'.format(node),
+            '--mpi', 'proc={0}'.format(node),
+            '--rsc-list', 'elapse={0}'.format(elapse),
+            '--sparam', 'wait-time={0}'.format(wait_time),
             '--rsc-list', 'rscgrp=interact',
             self.path
         ]

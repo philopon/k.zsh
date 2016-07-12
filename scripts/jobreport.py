@@ -61,28 +61,28 @@ AtomicMass = [
         261, 262, 266, 264, 269, 268, 271
 ]
 
-AtomicMass = {s: m for s, m in zip(AtomicSymbols, AtomicMass)}
+AtomicMass = dict([(s, m) for s, m in zip(AtomicSymbols, AtomicMass)])
 
 def parse_AO(s):
     cnt = {'s': 1, 'p': 3, 'd': 6, 'f': 10}
     return sum(int(o[:-1]) * cnt[o[-1]] for o in s.split(','))
 
-AOs_STO_3G = {s: parse_AO(m) for s, m in zip(
+AOs_STO_3G = dict([(s, parse_AO(m)) for s, m in zip(
     AtomicSymbols,
     ['1s'] * 2 +
     ['2s,1p'] * 8 +
     ['3s,2p'] * 8 +
     ['4s,3p'] * 2 + ['4s,3p,1d'] * 16 +
     ['5s,4p,1d'] * 2 + ['5s,4p,2d'] * 15
-)}
+)])
 
-AOs_6_31Gd = {s: parse_AO(m) for s, m in zip(
+AOs_6_31Gd = dict([(s, parse_AO(m)) for s, m in zip(
     AtomicSymbols,
     ['2s'] * 2 +
     ['3s,2p,1d'] * 8 +
     ['4s,3p,1d'] * 8 +
     ['5s,4p,1d'] * 2 + ['5s,4p,2d,1f'] * 10 + ['5s,4p,3d'] * 6
-)}
+)])
 
 BasisSet = {
     ('STO-3G', False): AOs_STO_3G,
@@ -214,7 +214,7 @@ class JobInfo(object):
 
         assert hasattr(self, 'pdb_id')
 
-        resp = requests.get('http://www.rcsb.org/pdb/rest/describeMol?structureId={}'.format(self.pdb_id))
+        resp = requests.get('http://www.rcsb.org/pdb/rest/describeMol?structureId={0}'.format(self.pdb_id))
         tree = ElementTree.fromstring(resp.content)
         kinds = [
             e.attrib['description']
@@ -293,6 +293,16 @@ class JobInfo(object):
         ])
 
     def report(self):
+        d = [
+            'date', 'job_id', 'account', 'wg', 'script_file',
+            'pdb_id', 'protein_kind', 'nf', 'max_mw', 'max_ao',
+            'monomer_time', 'dimer_time', 'total_time',
+            'node_num'
+        ]
+        d = dict([(k, None) for k in d])
+        d.update(self.__dict__)
+        d['node_hour'] = self.node_hour
+
         return '''
 date:                     {date}
 job id:                   {job_id}
@@ -315,7 +325,7 @@ total time:               {total_time}
 
 number of nodes:          {node_num}
 node hour:                {node_hour}
-'''[1:-1].format(node_hour=self.node_hour, **self.__dict__)
+'''[1:-1].format(**d)
 
 
 def main():

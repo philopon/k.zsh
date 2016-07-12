@@ -1,6 +1,8 @@
 import numpy as np
 import click
 import sys
+import os
+from collections import defaultdict
 
 
 class IFIE(object):
@@ -10,29 +12,95 @@ class IFIE(object):
 
     def _parse(self, it):
         res_header = 'Seq. Frag. Residue S-S  N-term.  C-Term. Charge'
+        frag_header = 'Frag.   Elec.   ATOM'
         ifie_header = 'IJ-PAIR    DIST     DIMER-ES   HF-IFIE    MP2-IFIE'
         hyphens = '-' * 20
 
-        while res_header not in next(it):
-            pass
-
-        self.sequences = []
-        self.residues = []
+        while True:
+            line = next(it)
+            if 'ReadGeom' in line:
+                self.pdb_file = line.split()[2].strip()
+                break
 
         while True:
             line = next(it)
-            if not line.strip():
+            if 'AutoFrag' in line:
+                self.auto_frag = line.split()[2] == 'ON'
                 break
 
-            seq = int(line[:5])
-            res = line[16:19]
-            self.sequences.append(seq)
-            self.residues.append(res)
+        if self.auto_frag:
+            while res_header not in next(it):
+                pass
 
-        self.sequences = np.array(self.sequences)
-        self.residues = np.array(self.residues)
+            self.sequences = []
+            self.residues = []
 
-        self.N = len(self.sequences)
+            while True:
+                line = next(it)
+                if not line.strip():
+                    break
+
+                seq = int(line[1:5])
+                res = line[16:19]
+                self.sequences.append(seq)
+                self.residues.append(res)
+
+            self.sequences = np.array(self.sequences)
+            self.residues = np.array(self.residues)
+            self.N = len(self.sequences)
+
+        elif not os.path.isfile(self.pdb_file):
+            while True:
+                line = next(it)
+                if ' NF ' in line:
+                    self.N = int(line.split()[2])
+                    break
+
+            self.sequences = np.arange(self.N) + 1
+            self.residues = np.array(['XXX'] * self.N)
+
+        else:
+            with open(self.pdb_file) as pdb_file:
+                atoms = self._parse_pdb(pdb_file)
+
+            while frag_header not in next(it):
+                pass
+
+            current_fragment = None
+            residues = []
+            sequences = []
+
+            while True:
+                line = next(it)
+                if not line.strip():
+                    break
+
+                if line[:20].strip():
+                    if current_fragment is not None:
+                        res, i = list(sorted([
+                            (n, k) for k, n in current_fragment.items()
+                        ]))[-1][1]
+
+                        residues.append(res)
+                        sequences.append(i)
+
+                    current_fragment = defaultdict(int)
+
+                for i in map(int, line[24:].split()):
+                    current_fragment[atoms[i]] += 1
+
+            if current_fragment:
+                res, i = list(sorted([
+                    (n, k) for k, n in current_fragment.items()
+                ]))[-1][1]
+
+                residues.append(res)
+                sequences.append(i)
+
+            self.N = len(residues)
+            self.residues = np.array(residues)
+            self.sequences = np.array(sequences)
+
         self.distance = np.zeros(shape=(self.N, self.N), dtype='float64')
         self.ifie = np.zeros(shape=(self.N, self.N, 2), dtype='float64')
         self.ligand_mask = np.zeros(shape=self.N, dtype='bool')
@@ -96,11 +164,23 @@ class IFIE(object):
             self.pieda[i, j, :] = es, ex, ct_mix, di
             self.pieda[j, i, :] = es, ex, ct_mix, di
 
+    def _parse_pdb(self, f):
+        rs = [None]
+
+        for line in f:
+            if line[:6] not in ['ATOM  ', 'HETATM']:
+                continue
+
+            res = line[17:20]
+            resi = int(line[22:26])
+            rs.append((res, resi))
+
+        return rs
+
     def frag_mask(self, seqs):
         m = np.zeros(len(self.sequences), dtype='bool')
-        for s in seqs:
-            m[self.sequences == s] = True
-
+        s = np.array(list(seqs)) - 1
+        m[s] = True
         return m
 
     def add_ligand(self, ligands):
@@ -114,8 +194,15 @@ class IFIE(object):
         far_mask = self.distance[self.ligand_mask, :].min(axis=0) > d
         self.exclude_mask[far_mask] = True
 
+    def exclude_water(self):
+        self.exclude_mask[self.residues == 'HOH'] = True
+        self.exclude_mask[self.residues == 'WAT'] = True
+
     def exclude(self, ex):
         self.exclude_mask[self.frag_mask(ex)] = True
+
+    def only(self, inc):
+        self.exclude_mask[~self.frag_mask(inc)] = True
 
     def get_masked(self, attr):
         return getattr(self, attr)[self.ligand_mask][:, ~self.exclude_mask]
@@ -135,8 +222,12 @@ class IFIE(object):
 
                 e = self.get_masked(ene_attr).sum(axis=0)
 
-                for i, res, d, ene in zip(i, r, d, e):
-                    yield sep.join(conv(self, i, res, d, *ene))
+                I = np.arange(1, self.N + 1)[~self.exclude_mask]
+
+                for i, seq, res, d, ene in zip(I, i, r, d, e):
+                    yield sep.join(
+                        [str(i)] + list(conv(self, seq, res, d, *ene))
+                    )
 
             return f
 
@@ -150,11 +241,11 @@ class IFIE(object):
     def _ene_fmt(f):
         return '{0:.6f}'.format(f)
 
-    @_gen_csv('residue,distance,ES,EX,CT+mix,DI', 'pieda')
+    @_gen_csv('i,residue,distance,ES,EX,CT+mix,DI', 'pieda')
     def gen_pieda_csv(self, i, res, *ene):
         return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
 
-    @_gen_csv('residue,distance,HF,MP2', 'ifie')
+    @_gen_csv('i,residue,distance,HF,MP2', 'ifie')
     def gen_ifie_csv(self, i, res, *ene):
         return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
 
@@ -162,7 +253,9 @@ class IFIE(object):
         f = self.gen_pieda_csv if pieda else self.gen_ifie_csv
         return f(header=header, sep=sep)
 
-    def plot(self, pieda=False, ylim=None, figsize=None):
+    def plot(self, pieda=False, ylim=None, figsize=None, legend=True,
+             title='Interaction energy'):
+
         from matplotlib import pyplot
 
         if figsize:
@@ -171,17 +264,26 @@ class IFIE(object):
             fig = pyplot.figure()
         ax = fig.add_subplot(111)
 
-        Ylabel = ('ES', 'EX', 'CT', 'DI') if pieda else ('HF', 'MP2')
+        if title:
+            ax.set_title(title)
+
+        Ylabel = ('ES', 'EX', 'CT+mix', 'DI') if pieda else ('HF', 'MP2')
 
         Y = self.get_masked('pieda' if pieda else 'ifie').sum(axis=0).T
         X = np.arange(Y.shape[1]) * (len(Ylabel) + 1)
 
-        colors = pyplot.rcParams['axes.prop_cycle']
+        colors = pyplot.rcParams['axes.prop_cycle']()
+
+        if not pieda:
+            next(colors)
+            next(colors)
 
         for i, l, Y, c in zip(range(4), Ylabel, Y, colors):
             ax.bar(X + i, Y, color=c['color'])
 
-        ax.legend(Ylabel, loc='best')
+        if legend:
+            ax.legend(Ylabel, loc='best')
+
         ax.set_ylabel('IFIE (kcal/mol)')
 
         ax.set_xticks(X + len(Ylabel) / 2)
@@ -219,61 +321,93 @@ class IFIE(object):
 
 
 @click.command()
-@click.option(
-    '-l', '--ligand',
-    help='ligand indices',
-    default=None, type=IFIE.parse_indices
-)
-@click.option(
-    '-e', '--exclude',
-    help='exclude indices',
-    default=None, type=IFIE.parse_indices
-)
+# files
 @click.argument(
     'input', type=click.File('r'), metavar='OUT_FILE'
-)
-@click.option(
-    '-f', '--exclude-far',
-    help='exclude far fragments',
-    default=None, type=float
-)
-@click.option(
-    '-p', '--pieda',
-    help='use pieda',
-    is_flag=True
-)
-@click.option(
-    '-c', '--csv',
-    help='output csv',
-    is_flag=True
-)
-@click.option(
-    '-s', '--separator',
-    help='csv separator',
-    type=str, default=','
-)
-@click.option(
-    '-h', '--header',
-    help='csv header',
-    is_flag=True
 )
 @click.option(
     '-o', '--output',
     help='png/csv output file',
     default=None, type=click.Path()
 )
+# selector
+@click.option(
+    '-l', '--ligand',
+    help='ligand indices', metavar='QUERY',
+    default=None, type=IFIE.parse_indices
+)
+@click.option(
+    '-e', '--exclude',
+    help='exclude indices', metavar='QUERY',
+    default=None, type=IFIE.parse_indices
+)
+@click.option(
+    '-i', '--only',
+    help='include only these indices', metavar='QUERY',
+    default=None, type=IFIE.parse_indices
+)
+@click.option(
+    '-d', '--exclude-far',
+    help='exclude far fragments', metavar='DISTANCE',
+    default=None, type=float
+)
+# flags
+@click.option(
+    '-p', '--pieda',
+    help='use pieda',
+    is_flag=True
+)
+@click.option(
+    '-H', '--exclude-water',
+    help='exclude HOH/WAT fragments',
+    is_flag=True
+)
+# mode
+@click.option(
+    '-c', '--csv',
+    help='csv mode',
+    is_flag=True
+)
+# csv specific
+@click.option(
+    '-s', '--separator',
+    help='[csv] specify separator',
+    type=str, default=','
+)
+# plot specific
+@click.option(
+    '-s', '--size',
+    help='[plot] output image size', metavar='WIDTH HEIGHT',
+    nargs=2, type=int
+)
 @click.option(
     '-y', '--ylim',
-    help='y axis range',
+    help='[plot] y axis range', metavar='MIN MAX',
     nargs=2, type=float
 )
 @click.option(
-    '-s', '--size',
-    help='output image size',
-    nargs=2, type=int
+    '-f', '--font-size',
+    help='[plot] font size', metavar='SIZE',
+    type=int, default=None
 )
-def main(ligand, exclude, exclude_far, pieda, csv,
-         input, separator, header, output, ylim, size):
+@click.option(
+    '-t', '--theme',
+    help='[plot] theme', metavar='NAME',
+    type=str, default='ggplot'
+)
+@click.option(
+    '-L', '--no-legend',
+    help='[plot] plot without legend',
+    is_flag=True, default=False
+)
+@click.option(
+    '-t', '--title',
+    help='[plot] override title',
+    type=str, default='Interaction energy'
+)
+def main(ligand, only, exclude, exclude_far, exclude_water, pieda, csv,
+         input, separator, output, ylim, size,
+         font_size, theme, no_legend, title):
 
     p = IFIE()
     p.parse(input)
@@ -287,6 +421,12 @@ def main(ligand, exclude, exclude_far, pieda, csv,
     if exclude_far:
         p.exclude_far(exclude_far)
 
+    if exclude_water:
+        p.exclude_water()
+
+    if only:
+        p.only(only)
+
     if csv:
         if output is None:
             output = sys.stdout
@@ -294,7 +434,7 @@ def main(ligand, exclude, exclude_far, pieda, csv,
             output = open(output, 'w')
 
         with output:
-            for line in p.gen_csv(pieda=pieda, sep=separator, header=header):
+            for line in p.gen_csv(pieda=pieda, sep=separator, header=True):
                 output.write(line)
                 output.write('\n')
 
@@ -306,13 +446,28 @@ def main(ligand, exclude, exclude_far, pieda, csv,
 
         from matplotlib import pyplot
 
-        pyplot.style.use('ggplot')
+        try:
+            pyplot.style.use(theme)
+        except IOError:
+            sys.stderr.write(
+                '''WARNING: theme {0} is not available.
+choose one of {1}
+'''.format(theme, ','.join(pyplot.style.available))
+            )
 
-        p.plot(pieda=pieda, ylim=ylim, figsize=size)
+        if font_size is not None:
+            pyplot.rcParams['font.size'] = font_size
+
+        p.plot(pieda=pieda, ylim=ylim, figsize=size,
+               legend=not no_legend, title=title)
+
+        pyplot.tight_layout()
 
         if output is None:
             pyplot.show()
         else:
             pyplot.savefig(output)
 
-main()
+
+if __name__ == '__main__':
+    main()

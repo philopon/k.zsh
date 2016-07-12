@@ -195,7 +195,7 @@ class IFIE(object):
 
         ax.set_xticks(X - 0.5, minor=True)
 
-        ax.grid(False, which='major')
+        ax.grid(False, which='major', axis='x')
         ax.grid(True, which='minor')
 
         ax.tick_params(axis='x', which='major', bottom=False, top=False)

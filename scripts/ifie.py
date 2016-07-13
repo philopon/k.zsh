@@ -1,8 +1,8 @@
 import numpy as np
-import click
 import sys
 import os
 from collections import defaultdict
+import argparse
 
 
 class IFIE(object):
@@ -204,6 +204,10 @@ class IFIE(object):
     def only(self, inc):
         self.exclude_mask[~self.frag_mask(inc)] = True
 
+    @property
+    def total(self):
+        return self.ifie.sum(axis=2)[:, :, np.newaxis]
+
     def get_masked(self, attr):
         return getattr(self, attr)[self.ligand_mask][:, ~self.exclude_mask]
 
@@ -249,11 +253,21 @@ class IFIE(object):
     def gen_ifie_csv(self, i, res, *ene):
         return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
 
-    def gen_csv(self, pieda=False, header=True, sep=','):
-        f = self.gen_pieda_csv if pieda else self.gen_ifie_csv
+    @_gen_csv('i,residue,distance,IFIE', 'total')
+    def gen_total_csv(self, i, res, *ene):
+        return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
+
+    def gen_csv(self, mode='ifie', header=True, sep=','):
+        if mode == 'ifie':
+            f = self.gen_ifie_csv
+        elif mode == 'pieda':
+            f = self.gen_pieda_csv
+        else:
+            f = self.gen_total_csv
+
         return f(header=header, sep=sep)
 
-    def plot(self, pieda=False, ylim=None, figsize=None, legend=True,
+    def plot(self, mode='ifie', ylim=None, figsize=None, legend=True,
              title='Interaction energy'):
 
         from matplotlib import pyplot
@@ -267,14 +281,18 @@ class IFIE(object):
         if title:
             ax.set_title(title)
 
-        Ylabel = ('ES', 'EX', 'CT+mix', 'DI') if pieda else ('HF', 'MP2')
+        Ylabel = {
+            'pieda': ('ES', 'EX', 'CT+mix', 'DI'),
+            'ifie': ('HF', 'MP2'),
+            'total': ('IFIE',),
+        }[mode]
 
-        Y = self.get_masked('pieda' if pieda else 'ifie').sum(axis=0).T
+        Y = self.get_masked(mode).sum(axis=0).T
         X = np.arange(Y.shape[1]) * (len(Ylabel) + 1)
 
         colors = pyplot.rcParams['axes.prop_cycle']()
 
-        if not pieda:
+        if mode != 'pieda':
             next(colors)
             next(colors)
 
@@ -286,7 +304,7 @@ class IFIE(object):
 
         ax.set_ylabel('IFIE (kcal/mol)')
 
-        ax.set_xticks(X + len(Ylabel) / 2)
+        ax.set_xticks(X + len(Ylabel) / 2.0)
         ax.set_xticklabels(
             map(self._res_fmt,
                 self.sequences[~self.exclude_mask],
@@ -320,153 +338,158 @@ class IFIE(object):
         return i
 
 
-@click.command()
-# files
-@click.argument(
-    'input', type=click.File('r'), metavar='OUT_FILE'
-)
-@click.option(
-    '-o', '--output',
-    help='png/csv output file',
-    default=None, type=click.Path()
-)
-# selector
-@click.option(
-    '-l', '--ligand',
-    help='ligand indices', metavar='QUERY',
-    default=None, type=IFIE.parse_indices
-)
-@click.option(
-    '-e', '--exclude',
-    help='exclude indices', metavar='QUERY',
-    default=None, type=IFIE.parse_indices
-)
-@click.option(
-    '-i', '--only',
-    help='include only these indices', metavar='QUERY',
-    default=None, type=IFIE.parse_indices
-)
-@click.option(
-    '-d', '--exclude-far',
-    help='exclude far fragments', metavar='DISTANCE',
-    default=None, type=float
-)
-# flags
-@click.option(
-    '-p', '--pieda',
-    help='use pieda',
-    is_flag=True
-)
-@click.option(
-    '-H', '--exclude-water',
-    help='exclude HOH/WAT fragments',
-    is_flag=True
-)
-# mode
-@click.option(
-    '-c', '--csv',
-    help='csv mode',
-    is_flag=True
-)
-# csv specific
-@click.option(
-    '-s', '--separator',
-    help='[csv] specify separator',
-    type=str, default=','
-)
-# plot specific
-@click.option(
-    '-s', '--size',
-    help='[plot] output image size', metavar='WIDTH HEIGHT',
-    nargs=2, type=int
-)
-@click.option(
-    '-y', '--ylim',
-    help='[plot] y axis range', metavar='MIN MAX',
-    nargs=2, type=float
-)
-@click.option(
-    '-f', '--font-size',
-    help='[plot] font size', metavar='SIZE',
-    type=int, default=None
-)
-@click.option(
-    '-t', '--theme',
-    help='[plot] theme', metavar='NAME',
-    type=str, default='ggplot'
-)
-@click.option(
-    '-L', '--no-legend',
-    help='[plot] plot without legend',
-    is_flag=True, default=False
-)
-@click.option(
-    '-t', '--title',
-    help='[plot] override title',
-    type=str, default='Interaction energy'
-)
-def main(ligand, only, exclude, exclude_far, exclude_water, pieda, csv,
-         input, separator, output, ylim, size,
-         font_size, theme, no_legend, title):
+class QueryAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, IFIE.parse_indices(values))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='ifie',
+        epilog='query example: "1", "1-5", "1-8,12"'
+    )
+
+    mode_group = parser.add_argument_group('mode')
+    mode_group.add_argument(
+        '-u', '--use', help='data to use.',
+        default='ifie', choices=('ifie', 'pieda', 'total')
+    )
+    mode_group.add_argument(
+        '-m', '--mode', default='csv', choices=('csv', 'plot'),
+        help='set mode (default: %(default)s)',
+    )
+
+    file_group = parser.add_argument_group('files')
+    file_group.add_argument(
+        'input', type=argparse.FileType('r'),
+        metavar='OUT_FILE', help='abinit-mp output file'
+    )
+    file_group.add_argument(
+        '-o', '--output',
+        type=str, help='image/csv output path', metavar='PATH'
+    )
+
+    selector_group = parser.add_argument_group('selectors')
+    selector_group.add_argument(
+        '-l', '--ligand', help='ligand query', metavar='QUERY',
+        action=QueryAction
+    )
+    selector_group.add_argument(
+        '-e', '--exclude', help='exclude query', metavar='QUERY',
+        action=QueryAction
+    )
+    selector_group.add_argument(
+        '-i', '--only', help='use only these fragments', metavar='QUERY',
+        action=QueryAction
+    )
+    selector_group.add_argument(
+        '-d', '--exclude_far', help='exclude far fragments', metavar='DIST',
+        type=float
+    )
+    selector_group.add_argument(
+        '-H', '--exclude-water', action='store_true',
+        help='exclude WAT/HOH fragments'
+    )
+
+    csv_group = parser.add_argument_group('csv mode')
+    csv_group.add_argument(
+        '--delimiter', help='csv delimiter', type=str, default=','
+    )
+
+    plot_group = parser.add_argument_group('plot mode')
+    plot_group.add_argument(
+        '-s', '--size', help='output image size', metavar=('WIDTH', 'HEIGHT'),
+        nargs=2, type=int
+    )
+    plot_group.add_argument(
+        '-y', '--ylim', help='y axis range', metavar=('MIN', 'MAX'),
+        nargs=2, type=float
+    )
+    plot_group.add_argument(
+        '-f', '--font-size', help='base font size', metavar='PX', type=int
+    )
+    plot_group.add_argument(
+        '--theme', help='set matplotlib theme',
+        type=str, default='ggplot'
+    )
+    plot_group.add_argument(
+        '-L', '--no-legend', help='plot without legend', action='store_true'
+    )
+    plot_group.add_argument(
+        '-t', '--title', help='override title', type=str,
+        default='Interaction energy'
+    )
+
+    opts = parser.parse_args()
 
     p = IFIE()
-    p.parse(input)
+    p.parse(opts.input)
 
-    if ligand:
-        p.add_ligand(ligand)
+    if opts.ligand:
+        p.add_ligand(opts.ligand)
 
-    if exclude:
-        p.exclude(exclude)
+    if opts.exclude:
+        p.exclude(opts.exclude)
 
-    if exclude_far:
-        p.exclude_far(exclude_far)
+    if opts.exclude_far and p.ligand_mask.any():
+        p.exclude_far(opts.exclude_far)
 
-    if exclude_water:
+    if opts.exclude_water:
         p.exclude_water()
 
-    if only:
-        p.only(only)
+    if opts.only:
+        p.only(opts.only)
 
-    if csv:
-        if output is None:
-            output = sys.stdout
-        else:
-            output = open(output, 'w')
+    if opts.mode == 'csv':
+        csv_mode(opts, p)
+    else:
+        plot_mode(opts, p)
 
-        with output:
-            for line in p.gen_csv(pieda=pieda, sep=separator, header=True):
-                output.write(line)
-                output.write('\n')
+
+def csv_mode(opts, p):
+    if opts.output is None:
+        output = sys.stdout
 
     else:
-        import matplotlib
+        output = open(output, 'w')
 
-        if output is None:
-            matplotlib.use('Qt4Agg')
+    with output:
+        for line in p.gen_csv(mode=opts.use,
+                              sep=opts.delimiter, header=True):
+            output.write(line)
+            output.write('\n')
 
-        from matplotlib import pyplot
 
-        try:
-            pyplot.style.use(theme)
-        except IOError:
-            sys.stderr.write(
-                '''WARNING: theme {0} is not available.
+def plot_mode(opts, p):
+    import matplotlib
+
+    if opts.output is None:
+        matplotlib.use('Qt4Agg')
+
+    from matplotlib import pyplot
+
+    try:
+        pyplot.style.use(opts.theme)
+    except IOError:
+        sys.stderr.write(
+            '''WARNING: theme {0} is not available.
 choose one of {1}
-'''.format(theme, ','.join(pyplot.style.available))
-            )
+'''.format(opts.theme, ','.join(pyplot.style.available))
+        )
 
-        if font_size is not None:
-            pyplot.rcParams['font.size'] = font_size
+    if opts.font_size is not None:
+        pyplot.rcParams['font.size'] = opts.font_size
 
-        p.plot(pieda=pieda, ylim=ylim, figsize=size,
-               legend=not no_legend, title=title)
+    p.plot(
+        mode=opts.use, ylim=opts.ylim, figsize=opts.size,
+        legend=not opts.no_legend, title=opts.title
+    )
+    pyplot.tight_layout()
 
-        pyplot.tight_layout()
-
-        if output is None:
-            pyplot.show()
-        else:
-            pyplot.savefig(output)
+    if opts.output is None:
+        pyplot.show()
+    else:
+        pyplot.savefig(opts.output)
 
 
 if __name__ == '__main__':

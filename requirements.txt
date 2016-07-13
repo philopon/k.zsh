@@ -2,4 +2,4 @@ requests == 2.10.0
 requests-cache == 0.4.12
 numpy == 1.10.4
 matplotlib == 1.5.1
-click == 6.6
+argparse == 1.4.0

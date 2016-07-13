@@ -32,7 +32,6 @@ class IFIE(object):
             while res_header not in next(it):
                 pass
 
-            self.sequences = []
             self.residues = []
 
             while True:
@@ -42,12 +41,10 @@ class IFIE(object):
 
                 seq = int(line[1:5])
                 res = line[16:19]
-                self.sequences.append(seq)
-                self.residues.append(res)
+                self.residues.append('{0}{1}'.format(res, seq))
 
-            self.sequences = np.array(self.sequences)
             self.residues = np.array(self.residues)
-            self.N = len(self.sequences)
+            self.N = len(self.residues)
 
         elif not os.path.isfile(self.pdb_file):
             while True:
@@ -56,8 +53,9 @@ class IFIE(object):
                     self.N = int(line.split()[2])
                     break
 
-            self.sequences = np.arange(self.N) + 1
-            self.residues = np.array(['XXX'] * self.N)
+            self.residues = np.array([
+                'XXX{0}'.format(i + 1) for i in range(self.N)
+            ])
 
         else:
             with open(self.pdb_file) as pdb_file:
@@ -68,7 +66,19 @@ class IFIE(object):
 
             current_fragment = None
             residues = []
-            sequences = []
+
+            def get_residues(frags):
+                reses = list(sorted([
+                    (n, k) for k, n in frags.items()
+                ]))
+                if len(reses) == 1:
+                    return '{0}{1}'.format(*reses[0][1])
+
+                larges = [k for (n, k) in reses if n > 2]
+                if len(larges) > 0:
+                    return '/'.join(['{0}{1}'.format(*r) for r in larges])
+
+                return '/'.join(['{0}{1}'.format(*r) for r in reses])
 
             while True:
                 line = next(it)
@@ -77,12 +87,7 @@ class IFIE(object):
 
                 if line[:20].strip():
                     if current_fragment is not None:
-                        res, i = list(sorted([
-                            (n, k) for k, n in current_fragment.items()
-                        ]))[-1][1]
-
-                        residues.append(res)
-                        sequences.append(i)
+                        residues.append(get_residues(current_fragment))
 
                     current_fragment = defaultdict(int)
 
@@ -90,16 +95,10 @@ class IFIE(object):
                     current_fragment[atoms[i]] += 1
 
             if current_fragment:
-                res, i = list(sorted([
-                    (n, k) for k, n in current_fragment.items()
-                ]))[-1][1]
-
-                residues.append(res)
-                sequences.append(i)
+                residues.append(get_residues(current_fragment))
 
             self.N = len(residues)
             self.residues = np.array(residues)
-            self.sequences = np.array(sequences)
 
         self.distance = np.zeros(shape=(self.N, self.N), dtype='float64')
         self.ifie = np.zeros(shape=(self.N, self.N, 2), dtype='float64')
@@ -178,7 +177,7 @@ class IFIE(object):
         return rs
 
     def frag_mask(self, seqs):
-        m = np.zeros(len(self.sequences), dtype='bool')
+        m = np.zeros(self.N, dtype='bool')
         s = np.array(list(seqs)) - 1
         m[s] = True
         return m
@@ -195,14 +194,19 @@ class IFIE(object):
         self.exclude_mask[far_mask] = True
 
     def exclude_water(self):
-        self.exclude_mask[self.residues == 'HOH'] = True
-        self.exclude_mask[self.residues == 'WAT'] = True
+        get_name = np.vectorize(lambda x: x[:3])
+        self.exclude_mask[get_name(self.residues) == 'HOH'] = True
+        self.exclude_mask[get_name(self.residues) == 'WAT'] = True
 
     def exclude(self, ex):
         self.exclude_mask[self.frag_mask(ex)] = True
 
     def only(self, inc):
         self.exclude_mask[~self.frag_mask(inc)] = True
+
+    def important(self, threshold=100.0):
+        ene = np.abs(self.total[self.ligand_mask, :, 0].sum(axis=0))
+        self.exclude_mask[ene < threshold] = True
 
     @property
     def total(self):
@@ -217,20 +221,19 @@ class IFIE(object):
                 if header:
                     yield header_str
 
-                i = self.sequences[~self.exclude_mask]
                 r = self.residues[~self.exclude_mask]
                 if self.ligand_mask.any():
                     d = self.get_masked('distance').min(axis=0)
                 else:
-                    d = [0] * len(i)
+                    d = [0] * len(r)
 
                 e = self.get_masked(ene_attr).sum(axis=0)
 
                 I = np.arange(1, self.N + 1)[~self.exclude_mask]
 
-                for i, seq, res, d, ene in zip(I, i, r, d, e):
+                for i, res, d, ene in zip(I, r, d, e):
                     yield sep.join(
-                        [str(i)] + list(conv(self, seq, res, d, *ene))
+                        [str(i)] + list(conv(self, res, d, *ene))
                     )
 
             return f
@@ -238,24 +241,20 @@ class IFIE(object):
         return dec
 
     @staticmethod
-    def _res_fmt(i, r):
-        return '{0}{1}'.format(r, i)
-
-    @staticmethod
     def _ene_fmt(f):
         return '{0:.6f}'.format(f)
 
     @_gen_csv('i,residue,distance,ES,EX,CT+mix,DI', 'pieda')
-    def gen_pieda_csv(self, i, res, *ene):
-        return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
+    def gen_pieda_csv(self, res, *ene):
+        return [res] + [self._ene_fmt(e) for e in ene]
 
     @_gen_csv('i,residue,distance,HF,MP2', 'ifie')
-    def gen_ifie_csv(self, i, res, *ene):
-        return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
+    def gen_ifie_csv(self, res, *ene):
+        return [res] + [self._ene_fmt(e) for e in ene]
 
     @_gen_csv('i,residue,distance,IFIE', 'total')
-    def gen_total_csv(self, i, res, *ene):
-        return [self._res_fmt(i, res)] + [self._ene_fmt(e) for e in ene]
+    def gen_total_csv(self, res, *ene):
+        return [res] + [self._ene_fmt(e) for e in ene]
 
     def gen_csv(self, mode='ifie', header=True, sep=','):
         if mode == 'ifie':
@@ -268,7 +267,11 @@ class IFIE(object):
         return f(header=header, sep=sep)
 
     def plot(self, mode='ifie', ylim=None, figsize=None, legend=True,
+             distance=False,
              title='Interaction energy'):
+
+        if self.exclude_mask.all():
+            raise ValueError('all residues are ignored.')
 
         from matplotlib import pyplot
 
@@ -305,13 +308,17 @@ class IFIE(object):
         ax.set_ylabel('IFIE (kcal/mol)')
 
         ax.set_xticks(X + len(Ylabel) / 2.0)
-        ax.set_xticklabels(
-            map(self._res_fmt,
-                self.sequences[~self.exclude_mask],
-                self.residues[~self.exclude_mask]
-                ),
-            rotation='vertical'
-        )
+
+        if distance:
+            xlabels = map(
+                '{0}\n{1:.1f}'.format,
+                self.residues[~self.exclude_mask],
+                self.get_masked('distance').min(axis=0)
+            )
+        else:
+            xlabels = self.residues[~self.exclude_mask]
+
+        ax.set_xticklabels(xlabels, rotation='vertical')
 
         ax.set_xticks(X - 0.5, minor=True)
 
@@ -390,6 +397,10 @@ def main():
         '-H', '--exclude-water', action='store_true',
         help='exclude WAT/HOH fragments'
     )
+    selector_group.add_argument(
+        '-I', '--important', type=float, help='only important residues',
+        default=100.0, nargs='?'
+    )
 
     csv_group = parser.add_argument_group('csv mode')
     csv_group.add_argument(
@@ -413,6 +424,10 @@ def main():
         type=str, default='ggplot'
     )
     plot_group.add_argument(
+        '-D', '--label-distance', help='add distance from ligand to label',
+        action='store_true'
+    )
+    plot_group.add_argument(
         '-L', '--no-legend', help='plot without legend', action='store_true'
     )
     plot_group.add_argument(
@@ -421,6 +436,8 @@ def main():
     )
 
     opts = parser.parse_args()
+
+    os.chdir(os.path.dirname(opts.input.name))
 
     p = IFIE()
     p.parse(opts.input)
@@ -439,6 +456,9 @@ def main():
 
     if opts.only:
         p.only(opts.only)
+
+    if opts.important:
+        p.important(opts.important)
 
     if opts.mode == 'csv':
         csv_mode(opts, p)
@@ -482,7 +502,8 @@ choose one of {1}
 
     p.plot(
         mode=opts.use, ylim=opts.ylim, figsize=opts.size,
-        legend=not opts.no_legend, title=opts.title
+        legend=not opts.no_legend, title=opts.title,
+        distance=opts.label_distance
     )
     pyplot.tight_layout()
 

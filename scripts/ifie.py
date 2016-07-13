@@ -274,6 +274,7 @@ class IFIE(object):
             raise ValueError('all residues are ignored.')
 
         from matplotlib import pyplot
+        from matplotlib.font_manager import FontProperties
 
         if figsize:
             fig = pyplot.figure(figsize=figsize)
@@ -282,7 +283,8 @@ class IFIE(object):
         ax = fig.add_subplot(111)
 
         if title:
-            ax.set_title(title)
+            fp = FontProperties(fname="/usr/share/fonts/ipa-pgothic/ipagp.ttf")
+            ax.set_title(title, fontproperties=fp)
 
         Ylabel = {
             'pieda': ('ES', 'EX', 'CT+mix', 'DI'),
@@ -502,7 +504,7 @@ choose one of {1}
 
     p.plot(
         mode=opts.use, ylim=opts.ylim, figsize=opts.size,
-        legend=not opts.no_legend, title=opts.title,
+        legend=not opts.no_legend, title=opts.title.decode("UTF-8"),
         distance=opts.label_distance
     )
     pyplot.tight_layout()

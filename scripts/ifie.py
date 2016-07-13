@@ -283,8 +283,17 @@ class IFIE(object):
         ax = fig.add_subplot(111)
 
         if title:
-            fp = FontProperties(fname="/usr/share/fonts/ipa-pgothic/ipagp.ttf")
-            ax.set_title(title, fontproperties=fp)
+            japanese = False
+            try:
+                title.decode("ascii")
+            except UnicodeEncodeError:
+                japanese = True
+
+            if japanese:
+                fp = FontProperties(fname="/usr/share/fonts/ipa-pgothic/ipagp.ttf", size=16)
+                ax.set_title(title, fontproperties=fp)
+            else:
+                ax.set_title(title)
 
         Ylabel = {
             'pieda': ('ES', 'EX', 'CT+mix', 'DI'),

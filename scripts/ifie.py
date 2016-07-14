@@ -5,117 +5,131 @@ from collections import defaultdict
 import argparse
 
 
-class IFIE(object):
+class Parser(object):
+    res_header = 'Seq. Frag. Residue S-S  N-term.  C-Term. Charge'
+    frag_header = 'Frag.   Elec.   ATOM'
+    ifie_header = 'IJ-PAIR    DIST     DIMER-ES   HF-IFIE    MP2-IFIE'
+    hyphens = '-' * 20
+
     def parse(self, f):
         with f:
-            return self._parse(iter(f))
+            self.it = iter(f)
+            return self._parse()
 
-    def _parse(self, it):
-        res_header = 'Seq. Frag. Residue S-S  N-term.  C-Term. Charge'
-        frag_header = 'Frag.   Elec.   ATOM'
-        ifie_header = 'IJ-PAIR    DIST     DIMER-ES   HF-IFIE    MP2-IFIE'
-        hyphens = '-' * 20
+    def __next__(self):
+        return next(self.it)
 
-        while True:
-            line = next(it)
-            if 'ReadGeom' in line:
-                self.pdb_file = line.split()[2].strip()
-                break
+    next = __next__
 
-        while True:
-            line = next(it)
-            if 'AutoFrag' in line:
-                self.auto_frag = line.split()[2] == 'ON'
-                break
+    def __iter__(self):
+        return self.it
 
-        if self.auto_frag:
-            while res_header not in next(it):
-                pass
+    @staticmethod
+    def _to_checker(i):
+        if isinstance(i, (str, unicode)):
+            def check(line):
+                return i in line
 
-            self.residues = []
+            return check
 
-            while True:
-                line = next(it)
-                if not line.strip():
-                    break
-
-                seq = int(line[1:5])
-                res = line[16:19]
-                self.residues.append('{0}{1}'.format(res, seq))
-
-            self.residues = np.array(self.residues)
-            self.N = len(self.residues)
-
-        elif not os.path.isfile(self.pdb_file):
-            while True:
-                line = next(it)
-                if ' NF ' in line:
-                    self.N = int(line.split()[2])
-                    break
-
-            self.residues = np.array([
-                'XXX{0}'.format(i + 1) for i in range(self.N)
-            ])
+        elif hasattr(i, '__call__'):
+            return i
 
         else:
-            with open(self.pdb_file) as pdb_file:
-                atoms = self._parse_pdb(pdb_file)
+            raise ValueError('unknown check type')
 
-            while frag_header not in next(it):
-                pass
+    def _drop_while(self, p):
+        check = self._to_checker(p)
 
-            current_fragment = None
-            residues = []
+        for line in self:
+            if check(line):
+                return line
 
-            def get_residues(frags):
-                reses = list(sorted([
-                    (n, k) for k, n in frags.items()
-                ]))
-                if len(reses) == 1:
-                    return '{0}{1}'.format(*reses[0][1])
+    def _feed_until(self, p):
+        check = self._to_checker(p)
 
-                larges = [k for (n, k) in reses if n > 2]
-                if len(larges) > 0:
-                    return '/'.join(['{0}{1}'.format(*r) for r in larges])
+        for line in self:
+            if not check(line):
+                return
 
-                return '/'.join(['{0}{1}'.format(*r) for r in reses])
+            yield line
 
-            while True:
-                line = next(it)
-                if not line.strip():
-                    break
+    def _parse_ReadGeom(self):
+        line = self._drop_while('ReadGeom')
+        self.pdb_file = line.split()[2].strip()
 
-                if line[:20].strip():
-                    if current_fragment is not None:
-                        residues.append(get_residues(current_fragment))
+    def _parse_AutoFrag(self):
+        line = self._drop_while('AutoFrag')
+        self.auto_frag = line.split()[2].strip() == 'ON'
 
-                    current_fragment = defaultdict(int)
+    def _parse_residues_AutoFrag(self):
+        self._drop_while(self.res_header)
 
-                for i in map(int, line[24:].split()):
-                    current_fragment[atoms[i]] += 1
+        residues = []
 
-            if current_fragment:
-                residues.append(get_residues(current_fragment))
+        for line in self._feed_until(lambda l: l.strip()):
+            seq = int(line[1:5])
+            res = line[16:19]
+            residues.append('{0}{1}'.format(res, seq))
 
-            self.N = len(residues)
-            self.residues = np.array(residues)
+        self.residues = np.array(residues)
+        self.N = len(residues)
 
-        self.distance = np.zeros(shape=(self.N, self.N), dtype='float64')
-        self.ifie = np.zeros(shape=(self.N, self.N, 2), dtype='float64')
-        self.ligand_mask = np.zeros(shape=self.N, dtype='bool')
-        self.exclude_mask = np.zeros(shape=self.N, dtype='bool')
+    def _parse_residues_no_AutoFrag_without_PDB(self):
+        line = self._drop_while(' NF ')
+        self.N = N = int(line.split()[2])
 
-        while ifie_header not in next(it):
-            pass
+        self.residues = np.array([
+            'XXX{0}'.format(i + 1) for i in xrange(N)
+        ])
 
-        while hyphens not in next(it):
-            pass
+    def _parse_residues_no_AutoFrag_with_PDB(self):
+        with open(self.pdb_file) as pdb_file:
+            atoms = self._parse_pdb(pdb_file)
 
-        while True:
-            line = next(it)
-            if not line.strip():
-                break
+        self._drop_while(self.frag_header)
 
+        current = None
+        residues = []
+
+        def append_fragment(frags):
+            if not frags:
+                return
+
+            reses = list(sorted([
+                (n, k) for k, n in frags.items()
+            ]))
+            if len(reses) == 1:
+                return residues.append('{0}{1}'.format(*reses[0][1]))
+
+            larges = [k for (n, k) in reses if n > 2]
+            if len(larges) > 0:
+                return residues.append(
+                    '/'.join(['{0}{1}'.format(*r) for r in larges])
+                )
+
+            residues.append('/'.join(['{0}{1}'.format(*r) for r in reses]))
+
+        for line in self._feed_until(lambda l: l.strip()):
+            if line[:20].strip():
+                append_fragment(current)
+                current = defaultdict(int)
+
+            for i in line[24:].split():
+                current[atoms[int(i)]] += 1
+
+        append_fragment(current)
+        self.N = len(residues)
+        self.residues = np.array(residues)
+
+    def _parse_ifie(self):
+        dist = np.zeros(shape=(self.N, self.N), dtype='float64')
+        ifie = np.zeros(shape=(self.N, self.N, 2), dtype='float64')
+
+        self._drop_while(self.ifie_header)
+        self._drop_while(self.hyphens)
+
+        for line in self._feed_until(lambda l: l.strip()):
             i = int(line[:13]) - 1
             j = int(line[13:18]) - 1
             d = float(line[18:30])
@@ -123,32 +137,26 @@ class IFIE(object):
             hf = float(line[39:50])
             mp2 = float(line[50:61])
 
-            self.ifie[i, j, :] = hf, mp2
-            self.ifie[j, i, :] = hf, mp2
-            self.distance[i, j] = d
-            self.distance[j, i] = d
+            ifie[i, j, :] = hf, mp2
+            ifie[j, i, :] = hf, mp2
+            dist[i, j] = d
+            dist[j, i] = d
 
-        self.ifie *= 627.509
+        self.distance = dist
+        self.ifie = ifie * 627.509
 
+    def _parse_pieda(self):
         try:
-            while '## PIEDA' not in next(it):
-                pass
-
-            self.pieda = np.zeros(shape=(self.N, self.N, 4), dtype='float64')
+            self._drop_while('## PIEDA')
         except StopIteration:
             self.pieda = None
-
-        if self.pieda is None:
             return
 
-        while hyphens not in next(it):
-            pass
+        self._drop_while(self.hyphens)
 
-        while True:
-            line = next(it)
-            if not line.strip():
-                break
+        pieda = np.zeros(shape=(self.N, self.N, 4), dtype='float64')
 
+        for line in self._feed_until(lambda l: l.strip()):
             i = int(line[:13]) - 1
             j = int(line[13:18]) - 1
 
@@ -157,11 +165,29 @@ class IFIE(object):
 
             es = float(line[18:33])
             ex = float(line[33:48])
-            ct_mix = float(line[48:63])
+            ct = float(line[48:63])
             di = float(line[63:78])
 
-            self.pieda[i, j, :] = es, ex, ct_mix, di
-            self.pieda[j, i, :] = es, ex, ct_mix, di
+            pieda[i, j, :] = es, ex, ct, di
+            pieda[j, i, :] = es, ex, ct, di
+
+        self.pieda = pieda
+
+    def _parse(self):
+        self._parse_ReadGeom()
+        self._parse_AutoFrag()
+
+        if self.auto_frag:
+            self._parse_residues_AutoFrag()
+
+        elif not os.path.isfile(self.pdb_file):
+            self._parse_residues_no_AutoFrag_without_PDB()
+
+        else:
+            self._parse_residues_no_AutoFrag_with_PDB()
+
+        self._parse_ifie()
+        self._parse_pieda()
 
     def _parse_pdb(self, f):
         rs = [None]
@@ -175,6 +201,20 @@ class IFIE(object):
             rs.append((res, resi))
 
         return rs
+
+
+class IFIE(object):
+    def parse(self, f):
+        p = Parser()
+        p.parse(f)
+        self.N = p.N
+        self.residues = p.residues
+        self.distance = p.distance
+        self.ifie = p.ifie
+        self.pieda = p.pieda
+
+        self.exclude_mask = np.zeros(p.N, dtype='bool')
+        self.ligand_mask = np.zeros(p.N, dtype='bool')
 
     def frag_mask(self, seqs):
         m = np.zeros(self.N, dtype='bool')
@@ -470,7 +510,10 @@ def main():
 
     opts = parser.parse_args()
 
-    os.chdir(os.path.dirname(opts.input.name))
+    try:
+        os.chdir(os.path.dirname(opts.input.name))
+    except OSError:
+        pass
 
     p = IFIE()
     p.parse(opts.input)

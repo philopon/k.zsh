@@ -290,7 +290,10 @@ class IFIE(object):
                 japanese = True
 
             if japanese:
-                fp = FontProperties(fname="/usr/share/fonts/ipa-pgothic/ipagp.ttf", size=16)
+                fp = FontProperties(
+                    fname="/usr/share/fonts/ipa-pgothic/ipagp.ttf",
+                    size=16
+                )
                 ax.set_title(title, fontproperties=fp)
             else:
                 ax.set_title(title)
@@ -361,6 +364,21 @@ class QueryAction(argparse.Action):
         setattr(namespace, self.dest, IFIE.parse_indices(values))
 
 
+class FuzzyChoiceAction(argparse.Action):
+    def __init__(self, option_strings, dest, choices=None, **kwargs):
+        super(FuzzyChoiceAction, self).__init__(option_strings, dest, **kwargs)
+        self.candidates = choices
+        self.metavar = '{{{0}}}'.format(','.join(map(str, choices)))
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        L = len(values)
+        cand = [c for c in self.candidates if c[:L].lower() == values.lower()]
+        if len(cand) != 1:
+            raise ValueError('ambiguous option')
+
+        setattr(namespace, self.dest, cand[0])
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog='ifie',
@@ -369,12 +387,14 @@ def main():
 
     mode_group = parser.add_argument_group('mode')
     mode_group.add_argument(
-        '-u', '--use', help='data to use.',
-        default='ifie', choices=('ifie', 'pieda', 'total')
+        '-u', '--use', help='data to use. (default: %(default)s)',
+        default='total', choices=('ifie', 'pieda', 'total'),
+        action=FuzzyChoiceAction
     )
     mode_group.add_argument(
         '-m', '--mode', default='csv', choices=('csv', 'plot'),
         help='set mode (default: %(default)s)',
+        action=FuzzyChoiceAction
     )
 
     file_group = parser.add_argument_group('files')
@@ -409,13 +429,15 @@ def main():
         help='exclude WAT/HOH fragments'
     )
     selector_group.add_argument(
-        '-I', '--important', type=float, help='only important residues',
-        default=100.0, nargs='?'
+        '-I', '--important', type=float,
+        help='only important residues (default: %(const)s)',
+        default=None, const=100.0, nargs='?', metavar='ENERGY'
     )
 
     csv_group = parser.add_argument_group('csv mode')
     csv_group.add_argument(
-        '--delimiter', help='csv delimiter', type=str, default=','
+        '--delimiter', help='csv delimiter (default: %(default)s)',
+        type=str, default=','
     )
 
     plot_group = parser.add_argument_group('plot mode')
@@ -453,22 +475,22 @@ def main():
     p = IFIE()
     p.parse(opts.input)
 
-    if opts.ligand:
+    if opts.ligand is not None:
         p.add_ligand(opts.ligand)
 
-    if opts.exclude:
+    if opts.exclude is not None:
         p.exclude(opts.exclude)
 
-    if opts.exclude_far and p.ligand_mask.any():
+    if opts.exclude_far is not None and p.ligand_mask.any():
         p.exclude_far(opts.exclude_far)
 
     if opts.exclude_water:
         p.exclude_water()
 
-    if opts.only:
+    if opts.only is not None:
         p.only(opts.only)
 
-    if opts.important:
+    if opts.important is not None:
         p.important(opts.important)
 
     if opts.mode == 'csv':

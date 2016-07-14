@@ -78,7 +78,3 @@ jt(){
 jr(){
     $K_ZSH_DIR/.sandbox/bin/python $K_ZSH_DIR/scripts/jobreport.py "$@"
 }
-
-ifie() {
-    $K_ZSH_DIR/.sandbox/bin/python $K_ZSH_DIR/scripts/ifie.py "$@"
-}

@@ -135,10 +135,10 @@ class Job(object):
         for srcs, dst in self.stgouts:
             for src in srcs:
                 if os.path.isfile(src):
-                    print('stgout: {} to {}'.format(src, dst))
+                    print('stgout: {0} to {1}'.format(src, dst))
                     shutil.copy(src, os.path.join(self.orig_dir, dst))
                 else:
-                    sys.stderr.write('{}: not exists\n'.format(src))
+                    sys.stderr.write('{0}: not exists\n'.format(src))
 
 
 def file_watch(src, dst):

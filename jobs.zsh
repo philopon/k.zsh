@@ -72,7 +72,7 @@ jg(){
 }
 
 jt(){
-    python2.7 $K_ZSH_DIR/scripts/jobtest.py "$@"
+    $K_ZSH_DIR/.sandbox/bin/python $K_ZSH_DIR/scripts/jobtest.py "$@"
 }
 
 jr(){
